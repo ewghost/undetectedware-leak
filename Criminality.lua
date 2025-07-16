@@ -24,10 +24,12 @@ local Tabs = {
     Main = Window:AddTab('Main'),
     Combat = Window:AddTab('Combat'),
     Misc = Window:AddTab('Misc'),
+    Skins = Window:AddTab('Skins'),
     Esp = Window:AddTab('Esp'),
     ['UI Settings'] = Window:AddTab('UI Settings'),
 }
 
+loadstring(game:HttpGet("https://rawscripts.net/raw/Baseplate-adonis-and-newindex-bypass-source-12378",true))()
 
 -- Create Left and Right groupboxes in the Main tab
 local ClientBox = Tabs.Main:AddLeftGroupbox('Player Features')
@@ -38,15 +40,23 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
--- Infinite Stamina Toggle Logic
+-- Infinite Stamina Variables
 local staminaLoop
-local function SetupInfiniteStamina()
-    local StaminaTbl = {}
+local StaminaTbl = {}
+
+-- Function to find stamina tables again
+local function UpdateStaminaTables()
+    table.clear(StaminaTbl)
     for _, v in pairs(getgc(true)) do
         if type(v) == "table" and rawget(v, "S") then
             table.insert(StaminaTbl, v)
         end
     end
+end
+
+-- Main Infinite Stamina Logic
+local function SetupInfiniteStamina()
+    UpdateStaminaTables()
 
     if staminaLoop then
         staminaLoop:Disconnect()
@@ -61,6 +71,16 @@ local function SetupInfiniteStamina()
     end)
 end
 
+-- Hook into character respawn to refresh stamina tables
+LocalPlayer.CharacterAdded:Connect(function()
+    -- Wait a short moment to ensure character is fully loaded
+    task.wait(1)
+    if Toggles.InfiniteStaminaToggle.Value then
+        SetupInfiniteStamina()
+    end
+end)
+
+-- UI Toggle Setup
 ClientBox:AddToggle('InfiniteStaminaToggle', {
     Text = 'Infinite Stamina',
     Default = false,
@@ -1006,6 +1026,158 @@ CombatLeft:AddToggle('TeamCheckToggle', {
     end
 })
 
+-- Variables & Services
+local Debris = workspace:WaitForChild("Debris")
+local VParts = Debris:WaitForChild("VParts")
+local Forward, Sideways = 0, 0
+local Break = false
+
+local plrs = game:GetService("Players")
+local me = plrs.LocalPlayer
+local tween = game:GetService("TweenService")
+local input = game:GetService("UserInputService")
+local run = game:GetService("RunService")
+local camera = workspace.CurrentCamera
+
+local rocketEnabled = false
+local rocketSpeed = 200
+
+-- UI for mobile controls
+local function createArrowControls()
+    local screenGui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+    screenGui.Name = "RocketArrows"
+    screenGui.Enabled = rocketEnabled
+
+    local function makeButton(name, pos, onPress, onRelease)
+        local btn = Instance.new("TextButton")
+        btn.Name = name
+        btn.Size = UDim2.new(0, 60, 0, 60)
+        btn.Position = pos
+        btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        btn.Text = name
+        btn.TextColor3 = Color3.new(1,1,1)
+        btn.Parent = screenGui
+
+        btn.MouseButton1Down:Connect(onPress)
+        btn.MouseButton1Up:Connect(onRelease)
+        return btn
+    end
+
+    makeButton("↑", UDim2.new(0.9, 0, 0.6, 0), function() Forward = 1 end, function() Forward = 0 end)
+    makeButton("↓", UDim2.new(0.9, 0, 0.75, 0), function() Forward = -1 end, function() Forward = 0 end)
+    makeButton("←", UDim2.new(0.85, 0, 0.675, 0), function() Sideways = -1 end, function() Sideways = 0 end)
+    makeButton("→", UDim2.new(0.95, 0, 0.675, 0), function() Sideways = 1 end, function() Sideways = 0 end)
+
+    return screenGui
+end
+
+local arrowGui = createArrowControls()
+
+-- Toggle and UI (no keypicker)
+CombatLeft:AddToggle("RocketToggle", {
+    Text = "Rocket Control",
+    Default = false,
+    Callback = function(value)
+        rocketEnabled = value
+        arrowGui.Enabled = value
+
+        if not value and me.Character then
+            Forward, Sideways, Break = 0, 0, false
+            local root = me.Character:FindFirstChild("HumanoidRootPart")
+            if root then root.Anchored = false end
+            camera.CameraSubject = me.Character:FindFirstChild("Humanoid")
+        end
+    end,
+})
+
+-- Speed control
+CombatLeft:AddSlider('RocketSpeed', {
+    Text = 'Rocket Speed',
+    Default = 200,
+    Min = 10,
+    Max = 500,
+    Rounding = 0,
+    Compact = false,
+    Callback = function(value)
+        rocketSpeed = value
+    end
+})
+
+-- Rocket Logic
+VParts.ChildAdded:Connect(function(Projectile)
+    if not rocketEnabled then return end
+    task.wait()
+
+    if Projectile.Name == "RPG_Rocket" or Projectile.Name == "GrenadeLauncherGrenade" then
+        if not me.Character then return end
+        if Projectile.Name == "RPG_Rocket" and not me.Character:FindFirstChild("RPG-7") then return end
+
+        camera.CameraSubject = Projectile
+        local root = me.Character:FindFirstChild("HumanoidRootPart")
+        if root then root.Anchored = true end
+
+        pcall(function()
+            if Projectile:FindFirstChild("BodyForce") then Projectile.BodyForce:Destroy() end
+            if Projectile:FindFirstChild("RotPart") and Projectile.RotPart:FindFirstChild("BodyAngularVelocity") then
+                Projectile.RotPart.BodyAngularVelocity:Destroy()
+            end
+            if Projectile:FindFirstChild("BodyAngularVelocity") then Projectile.BodyAngularVelocity:Destroy() end
+            if Projectile:FindFirstChild("Sound") then Projectile.Sound:Destroy() end
+        end)
+
+        local BV = Instance.new("BodyVelocity", Projectile)
+        BV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+        BV.Velocity = Vector3.zero
+
+        local BG = Instance.new("BodyGyro", Projectile)
+        BG.P = 9e4
+        BG.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+
+        task.spawn(function()
+            while Projectile and Projectile.Parent and rocketEnabled do
+                run.RenderStepped:Wait()
+                tween:Create(BV, TweenInfo.new(0), {
+                    Velocity = ((camera.CFrame.LookVector * Forward) + (camera.CFrame.RightVector * Sideways)) * rocketSpeed
+                }):Play()
+                BG.CFrame = camera.CFrame
+                local targetCFrame = Projectile.CFrame * CFrame.new(0, 1, 1)
+                camera.CFrame = camera.CFrame:Lerp(targetCFrame + Vector3.new(0, 5, 0), 0.1)
+                if Break then
+                    Break = false
+                    break
+                end
+            end
+            if me.Character then
+                local hum = me.Character:FindFirstChild("Humanoid")
+                if hum then camera.CameraSubject = hum end
+                local root = me.Character:FindFirstChild("HumanoidRootPart")
+                if root then root.Anchored = false end
+            end
+        end)
+    end
+end)
+
+-- Keyboard input
+input.InputBegan:Connect(function(Key)
+    if Key.KeyCode == Enum.KeyCode.W then
+        Forward = 1
+    elseif Key.KeyCode == Enum.KeyCode.S then
+        Forward = -1
+    elseif Key.KeyCode == Enum.KeyCode.D then
+        Sideways = 1
+    elseif Key.KeyCode == Enum.KeyCode.A then
+        Sideways = -1
+    end
+end)
+
+input.InputEnded:Connect(function(Key)
+    if Key.KeyCode == Enum.KeyCode.W or Key.KeyCode == Enum.KeyCode.S then
+        Forward = 0
+    elseif Key.KeyCode == Enum.KeyCode.A or Key.KeyCode == Enum.KeyCode.D then
+        Sideways = 0
+    end
+end)
+
 
 -- Example button: Hitbox Expander (like your example)
 CombatLeft:AddButton({
@@ -1020,7 +1192,7 @@ CombatLeft:AddButton({
 
 -- SETTINGS
 local SilentAimSettings = {
-    Enabled = false,          -- Start disabled
+    Enabled = false,
     DrawSize = 150,
     TargetPart = "Head",
     CheckWhitelist = false,
@@ -1031,6 +1203,8 @@ local SilentAimSettings = {
     DrawCircle = true,
     DrawColor = Color3.fromRGB(255, 255, 255)
 }
+
+local Whitelist = {}
 
 -- SERVICES
 local Players = game:GetService("Players")
@@ -1073,9 +1247,9 @@ local function GetClosestTarget()
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
             if SilentAimSettings.CheckTeam and player.Team == LocalPlayer.Team then continue end
-            if SilentAimSettings.CheckWhitelist then continue end
+            if SilentAimSettings.CheckWhitelist and table.find(Whitelist, player.Name) then continue end
 
-            local part = player.Character:FindFirstChild(SilentAimSettings.TargetPart) or player.Character:FindFirstChild("Head")
+            local part = player.Character:FindFirstChild("HumanoidRootPart")
             if not part then continue end
 
             local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
@@ -1101,6 +1275,21 @@ local function GetClosestTarget()
     return closest
 end
 
+-- RANDOM PART FUNCTION
+local BodyParts = {"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
+local function GetTargetPart(char)
+    if SilentAimSettings.TargetPart == "Random" then
+        for _ = 1, 5 do
+            local partName = BodyParts[math.random(1, #BodyParts)]
+            local part = char:FindFirstChild(partName)
+            if part then return part end
+        end
+        return char:FindFirstChild("Head")
+    else
+        return char:FindFirstChild(SilentAimSettings.TargetPart)
+    end
+end
+
 -- SILENT AIM EXECUTION
 local VisualizeEvent = ReplicatedStorage:WaitForChild("Events2"):WaitForChild("Visualize")
 local DamageEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("ZFKLF__H")
@@ -1119,7 +1308,7 @@ VisualizeEvent.Event:Connect(function(_, ShotCode, _, Gun, _, StartPos, BulletsP
     local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
     if not tool or Gun ~= tool then return end
 
-    local part = currentTarget.Character:FindFirstChild(SilentAimSettings.TargetPart)
+    local part = GetTargetPart(currentTarget.Character)
     if not part then return end
 
     local hitPos = part.Position
@@ -1140,16 +1329,14 @@ VisualizeEvent.Event:Connect(function(_, ShotCode, _, Gun, _, StartPos, BulletsP
     end
 end)
 
--- UI TOGGLES using CombatRight:AddToggle and AddSlider
-
+-- UI (Replace "CombatRight" with your section if needed)
 CombatRight:AddToggle('SilentAimMasterToggle', {
     Text = 'Silent Aim',
     Default = SilentAimSettings.Enabled,
-    Tooltip = 'Silent aim',
+    Tooltip = 'Silent aim toggle',
     Callback = function(enabled)
         SilentAimSettings.Enabled = enabled
         FOVCircle.Visible = enabled and SilentAimSettings.DrawCircle
-        
     end
 })
 
@@ -1165,7 +1352,7 @@ CombatRight:AddToggle('CheckWhitelistToggle', {
 CombatRight:AddToggle('CheckWallToggle', {
     Text = 'Wall Check',
     Default = SilentAimSettings.CheckWall,
-    Tooltip = 'May Cause Lag',
+    Tooltip = 'May cause lag',
     Callback = function(enabled)
         SilentAimSettings.CheckWall = enabled
     end
@@ -1174,7 +1361,7 @@ CombatRight:AddToggle('CheckWallToggle', {
 CombatRight:AddToggle('UseHitChanceToggle', {
     Text = 'Use Hit Chance',
     Default = SilentAimSettings.UseHitChance,
-    Tooltip = 'Random chance to hit',
+    Tooltip = 'Chance to hit based on percent',
     Callback = function(enabled)
         SilentAimSettings.UseHitChance = enabled
     end
@@ -1205,24 +1392,49 @@ CombatRight:AddSlider('SilentAimFOVSlider', {
     Min = 20,
     Max = 500,
     Rounding = 0,
-    Tooltip = 'Adjust silent aim FOV radius',
+    Tooltip = 'Adjust FOV radius',
     Callback = function(value)
         SilentAimSettings.DrawSize = value
     end
 })
+
 CombatRight:AddDropdown('SilentAimParts', {
-    Values = {"Head", "Torso", "Right Arm", "Left Arm", "Right Leg", "Left Leg"},
+    Values = {"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg", "Random"},
     Default = 1,
     Multi = false,
-    Text = 'Target part',
-    Tooltip = 'Select parts that the silent-aim will target',
+    Text = 'Target Part',
+    Tooltip = 'Choose which part to hit',
     Callback = function(selected)
         SilentAimSettings.TargetPart = selected
-        
     end
 })
 
+-- WHITELIST DROPDOWN
+CombatRight:AddDropdown('SilentAimWhitelistDropdown', {
+    Values = {},
+    Default = {},
+    Multi = true,
+    Text = 'Whitelist',
+    Tooltip = 'Select players to ignore',
+    Callback = function(selected)
+        Whitelist = selected
+    end
+})
 
+-- Function to update whitelist dropdown
+local function UpdateWhitelistDropdown()
+    local values = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            table.insert(values, player.Name)
+        end
+    end
+    Options.SilentAimWhitelistDropdown:SetValues(values)
+end
+
+UpdateWhitelistDropdown()
+Players.PlayerAdded:Connect(UpdateWhitelistDropdown)
+Players.PlayerRemoving:Connect(UpdateWhitelistDropdown)
 
 
 local MiscLeft = Tabs.Misc:AddLeftGroupbox('Misc Features')
@@ -1612,6 +1824,32 @@ MiscLeft:AddToggle('NoClipToggle', {
         end
     end
 })
+
+input.InputEnded:Connect(function(Key)
+    if Key.KeyCode == Enum.KeyCode.W or Key.KeyCode == Enum.KeyCode.S then
+        Forward = 0
+    elseif Key.KeyCode == Enum.KeyCode.D or Key.KeyCode == Enum.KeyCode.A then
+        Sideways = 0
+    end
+end)
+
+Debris.ChildAdded:Connect(function(Result)
+    task.wait()
+    if not me.Character then return end
+    pcall(function()
+        if me.Character:FindFirstChild("RPG-7") and (Result.Name == "RPG_Explosion_Long" or Result.Name == "RPG_Explosion_Short") then
+            Break = true
+            task.wait(1)
+            Break = false
+        end
+        if (me.Character:FindFirstChild("M320-1") or me.Character:FindFirstChild("SCAR-H-X")) and (Result.Name == "GL_Explosion_Long" or Result.Name == "GL_Explosion_Short") then
+            Break = true
+            task.wait(1)
+            Break = false
+        end
+    end)
+end)
+
 local TeleportSettings = {
     SelectedTarget = nil,
     LoopTeleport = false
@@ -1640,6 +1878,7 @@ MiscRight:AddDropdown('Safes', {
         TeleportSettings.SelectedTarget = selected
     end
 })
+
 
 -- 4. Toggle UI for looping teleport to that model's MainPart
 MiscRight:AddToggle('LoopTP', {
@@ -2002,6 +2241,136 @@ MiscRight:AddToggle('LockpickHBEToggle', {
         updateLockpickBars()
     end
 })
+
+
+local vendingEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("VendinMachine")
+
+-- Globals
+getgenv().AutoVendingEnabled = false
+getgenv().SelectedVendingItem = "snack"
+getgenv().VendingLoop = nil
+
+-- Toggle first
+MiscRight:AddToggle('AutoVendingToggle', {
+    Text = 'Auto Use Vending Machines',
+    Default = false,
+    Tooltip = 'Uses every vending machine automatically when free',
+    Callback = function(enabled)
+        getgenv().AutoVendingEnabled = enabled
+
+        if enabled then
+            getgenv().VendingLoop = game:GetService("RunService").Heartbeat:Connect(function()
+                if not getgenv().AutoVendingEnabled then return end
+
+                -- Only run if not currently vending (avoid spamming)
+                local char = LocalPlayer.Character
+                if not char or char:FindFirstChild("UsingVending") then return end
+
+                local vendingFolder = Workspace:FindFirstChild("Map"):FindFirstChild("VendingMachines")
+                if vendingFolder then
+                    for _, vending in ipairs(vendingFolder:GetChildren()) do
+                        local mainPart = vending:FindFirstChild("MainPart")
+                        if mainPart then
+                            pcall(function()
+                                vendingEvent:InvokeServer(mainPart, getgenv().SelectedVendingItem)
+                            end)
+                        end
+                    end
+                end
+            end)
+        else
+            if getgenv().VendingLoop then
+                getgenv().VendingLoop:Disconnect()
+                getgenv().VendingLoop = nil
+            end
+        end
+    end
+})
+
+-- Dropdown second
+MiscRight:AddDropdown('AutoVendingItemDropdown', {
+    Values = { "snack", "soda" },
+    Default = 1,
+    Multi = false,
+    Text = 'Item Type',
+    Tooltip = 'Choose whether to buy snack or soda',
+    Callback = function(value)
+        getgenv().SelectedVendingItem = value
+    end
+})
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local AutoRepairRange = 100
+local AutoRePairAndReFillCoolDown = false
+
+-- Find nearest dealer or armory dealer within range
+local function GetDealer(Studs, Type)
+    local Part = nil
+    Studs = Studs or math.huge
+    for _, v in ipairs(Workspace.Map.Shopz:GetChildren()) do
+        if v.Name == Type and v:FindFirstChild("MainPart") then
+            local Distance = (LocalPlayer.Character.HumanoidRootPart.Position - v.MainPart.Position).Magnitude
+            if Distance < Studs then
+                Studs = Distance
+                Part = v.MainPart
+            end
+        end
+    end
+    return Part
+end
+
+-- Find equipped armor
+local function GetArmor()
+    for _, v in ipairs(LocalPlayer.Character:GetChildren()) do
+        if v:FindFirstChild("BrokenM") then
+            return v.Name
+        end
+    end
+    return "None"
+end
+
+MiscRight:AddToggle('AutoRepairRefillToggle', {
+    Text = 'Auto Repair & Refill',
+    Default = false,
+    Tooltip = 'Automatically repairs armor and refills ammo near dealers',
+    Callback = function(enabled)
+        if enabled then
+            task.spawn(function()
+                while Toggles.AutoRepairRefillToggle.Value do
+                    if not AutoRePairAndReFillCoolDown then
+                        AutoRePairAndReFillCoolDown = true
+
+                        local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                        local armor = GetArmor()
+                        local dealer = GetDealer(AutoRepairRange, "Dealer") or GetDealer(AutoRepairRange, "ArmoryDealer")
+
+                        if dealer and tool then
+                            if dealer.Parent.Name == "Dealer" then
+                                ReplicatedStorage.Events.SSHPRMTE1:InvokeServer("IllegalStore", "Guns", tool.Name, dealer, "ResupplyAmmo")
+                                if armor ~= "None" then
+                                    ReplicatedStorage.Events.SSHPRMTE1:InvokeServer("IllegalStore", "Armour", armor, dealer, "ResupplyAmmo")
+                                end
+                            elseif dealer.Parent.Name == "ArmoryDealer" then
+                                ReplicatedStorage.Events.SSHPRMTE1:InvokeServer("LegalStore", "Guns", tool.Name, dealer, "ResupplyAmmo")
+                                if armor ~= "None" then
+                                    ReplicatedStorage.Events.SSHPRMTE1:InvokeServer("LegalStore", "Armour", armor, dealer, "ResupplyAmmo")
+                                end
+                            end
+                        end
+
+                        task.wait(0.5)
+                        AutoRePairAndReFillCoolDown = false
+                    end
+                    task.wait()
+                end
+            end)
+        end
+    end
+})
+
 getgenv().AutoClaimAllowanceEnabled = false
 local AutoClaimAllowanceCoolDown = false
 
@@ -2051,203 +2420,553 @@ MiscRight:AddToggle('AutoClaimAllowanceToggle', {
 })
 
 
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
 
--- Positions for teleporting
-local targetPositions = {
-    Vector3.new(-4627.25, 1.67, -980.48),      -- 1st updated
-    Vector3.new(-5000.67, 1.95, -373.10),      -- 2nd updated
-    Vector3.new(-4790.30, 1.95, -383.11),      -- 3rd updated
-    Vector3.new(-4789.91, 1.96, -372.03),      -- 4th updated
-    Vector3.new(-4789.91, 1.96, -372.03),      -- 5th updated
-    Vector3.new(-4789.91, 1.96, -372.03),      -- 6th updated
-    Vector3.new(-4789.91, 1.96, -372.03),      -- 7th added
-    Vector3.new(-4789.91, 1.96, -372.03)       -- 8th added
+
+local SkinsLeft = Tabs.Skins:AddLeftGroupbox('Gun Skins')
+local SkinsRight = Tabs.Skins:AddRightGroupbox('Melee Skins')
+
+-- // Services
+local Workspace = game:GetService("Workspace")
+
+-- // WeaponSkins: complete table
+local WeaponSkins = {
+    ["G-17"] = {
+        Skins = {
+            ["Amethyst"] = "rbxassetid://9344554991",
+            ["Benjamin"] = "rbxassetid://18198686840",
+            ["Digital Green"] = "rbxassetid://9422494421",
+            ["Elimination"] = "rbxassetid://94164067871562",
+            ["Gleagle"] = "rbxassetid://16911005097",
+            ["Grunch"] = "rbxassetid://131243696649384",
+            ["Hotpink"] = "rbxassetid://1599855752",
+            ["Night"] = "rbxassetid://13556385916",
+            ["Oxide"] = "rbxassetid://13556385",
+            ["Photon"] = "rbxassetid://139614772944365",
+            ["Sage"] = "rbxassetid://10898771076",
+            ["Tan"] = "rbxassetid://13841571102",
+            ["Warhawk"] = "rbxassetid://10898489161",
+            ["Yosei"] = "rbxassetid://16040462957"
+        },
+        LinkedTools = { "G-17", "G-18", "G-18-X" },
+        SkipParts = { ["G-18-X"] = { "MagPart", "StockPart" } }
+    },
+
+    ["Beretta"] = {
+        Skins = {
+            ["Clef"] = "rbxassetid://13387587315",
+            ["Digital"] = "rbxassetid://9341791793",
+            ["Faded Orchid"] = "rbxassetid://129085891817339",
+            ["Gold"] = "rbxassetid://15071881699",
+            ["Moss"] = "rbxassetid://13443011965",
+            ["Silvered"] = "rbxassetid://15998409351",
+            ["Tiger"] = "rbxassetid://13704088639",
+            ["Urban Red"] = "rbxassetid://13841595045",
+            ["Vampire Hunter"] = "rbxassetid://137465478194507",
+            ["Walker"] = "rbxassetid://15177173325",
+            ["Wooden Blaster"] = "rbxassetid://15695411633"
+        }
+    },
+
+    ["M1911"] = {
+        Skins = {
+            ["Darkheart"] = "rbxassetid://13564716720",
+            ["Ironsight"] = "rbxassetid://13388236414",
+            ["Lunar"] = "rbxassetid://89241722764611",
+            ["Old Glory"] = "rbxassetid://13948805827",
+            ["Rebel"] = "rbxassetid://13410196884",
+            ["Sandwaves"] = "rbxassetid://15998635906",
+            ["Stainless"] = "rbxassetid://13842569053",
+            ["Unity"] = "rbxassetid://18149757669"
+        }
+    },
+
+    ["AKS-74U"] = {
+        Skins = {
+            ["Battleworn Camo"] = "rbxassetid://13842104374",
+            ["Cherish"] = "rbxassetid://16355374224",
+            ["Crimcola"] = "rbxassetid://13387556541",
+            ["Decay74U"] = "rbxassetid://96042163422893",
+            ["Draco"] = "rbxassetid://13388090322",
+            ["Formula"] = "rbxassetid://16010500192",
+            ["Frostbite"] = "rbxassetid://86574930426293",
+            ["Gravebound"] = "rbxassetid://80179995184396",
+            ["Jadestone"] = "rbxassetid://13712920992",
+            ["Mire"] = "rbxassetid://15177286670",
+            ["Sharkbite"] = "rbxassetid://11684759812"
+        },
+        LinkedTools = { "AKS-74U", "AKS-74U-X" },
+        SkipParts = { ["AKS-74U-X"] = { "LaserPart", "SightPart" } }
+    },
+
+    ["Deagle"] = {
+        Skins = {
+            ["Acrylic"] = "rbxassetid://13714048705",
+            ["Aurora"] = "rbxassetid://137473693247245",
+            ["Eagle Eye"] = "rbxassetid://13937646988",
+            ["Ember"] = "rbxassetid://16041798829",
+            ["Exotic Test"] = "rbxassetid://15445293206",
+            ["Federation"] = "rbxassetid://13841710519",
+            ["Gingerbread"] = "rbxassetid://15695335320",
+            ["Gold"] = "rbxassetid://9422465914",
+            ["Nacho"] = "rbxassetid://16942393059",
+            ["Plasma"] = "rbxassetid://13567908266",
+            ["Presidential"] = "rbxassetid://18198669148",
+            ["Reaper"] = "rbxassetid://129373670599388"
+        }
+    },
+
+    ["FNP-45"] = {
+        Skins = {
+            ["Bloodshot"] = "rbxassetid://13566118019",
+            ["Pulse"] = "rbxassetid://16355357614",
+            ["Tan"] = "rbxassetid://15998532953"
+        }
+    },
+
+    ["Ithaca-37"] = {
+        Skins = {
+            ["Blaze"] = "rbxassetid://13703922904",
+            ["Darkmatter"] = "rbxassetid://15998572471",
+            ["Engraved"] = "rbxassetid://13388409062",
+            ["Hellfire"] = "rbxassetid://120094510362818",
+            ["Home Defense"] = "rbxassetid://13935302367",
+            ["Ithcuh"] = "rbxassetid://16910986091",
+            ["Lined Legacy"] = "rbxassetid://13388409062",
+            ["Peppershot"] = "rbxassetid://97444135069232",
+            ["Reserve"] = "rbxassetid://13841781874",
+            ["Supernatural"] = "rbxassetid://15183699872"
+        }
+    },
+
+    ["M320-1"] = {
+        Skins = {
+            ["Paintball"] = "rbxassetid://13842613980"
+        }
+    },
+
+    ["M4A1"] = {
+        Skins = {
+            ["Aureus"] = "rbxassetid://13714578814",
+            ["Circuit"] = "rbxassetid://13841654362",
+            ["Colacamo"] = "rbxassetid://16910927803",
+            ["Frostbite"] = "rbxassetid://15695451364",
+            ["Gold"] = "rbxassetid://18231287937",
+            ["Heritage"] = "rbxassetid://18312055711",
+            ["Inferno"] = "rbxassetid://15417229857",
+            ["Meltdown"] = "rbxassetid://138263153339452",
+            ["Monochrome"] = "rbxassetid://13388682540",
+            ["Patriot"] = "rbxassetid://13945985275",
+            ["Tiles"] = "rbxassetid://13387870685",
+            ["Yellowstone"] = "rbxassetid://15998610605"
+        },
+        LinkedTools = { "M4A1-1", "M4A1-S" },
+        SkipParts = {
+            ["M4A1-1"] = { "SuppressorPart", "LaserPart", "SightPart" },
+            ["M4A1-S"] = { "SuppressorPart", "LaserPart", "SightPart" }
+        }
+    },
+
+    ["MAC-10"] = {
+        Skins = {
+            ["Cheese"] = "rbxassetid://13556188816",
+            ["Cryofox"] = "rbxassetid://72676229182235",
+            ["Digital"] = "rbxassetid://13388148081",
+            ["Eagle's Pride"] = "rbxassetid://18213166722",
+            ["Freedom"] = "rbxassetid://13935272075",
+            ["Harvest"] = "rbxassetid://110907808308032",
+            ["Hazmac"] = "rbxassetid://70974570171047",
+            ["Lost‑N‑Found"] = "rbxassetid://13841544929",
+            ["Lovely Camo"] = "rbxassetid://16357659168",
+            ["Sunrise"] = "rbxassetid://13387823798",
+            ["Tropical"] = "rbxassetid://13712964810",
+            ["Urban Dispatch"] = "rbxassetid://15998654861"
+        },
+        LinkedTools = { "MAC-10", "MAC-10-S" },
+        SkipParts = { ["MAC-10-S"] = { "SuppressorPart" } }
+    },
+
+    ["FN-FAL-S"] = {
+        Skins = {
+            ["Majesty"] = "rbxassetid://12268008265",
+            ["Merlot"] = "rbxassetid://13566072355",
+            ["Purpleheart"] = "rbxassetid://16040566002",
+            ["Winter Maroon"] = "rbxassetid://15710689399"
+        },
+        SkipParts = { ["FN-FAL-S"] = { "SightPart", "SuppressorPart", "SightBlackPart" } }
+    },
+
+    ["RPG-7"] = {
+        Skins = {
+            ["Boom"] = "rbxassetid://10959329950",
+            ["Gold"] = "rbxassetid://13715204837",
+            ["Two-Tone"] = "rbxassetid://13388377781"
+        }
+    },
+
+    ["Sawn-Off"] = {
+        Skins = {
+            ["Banana"] = "rbxassetid://13387455222",
+            ["Caution"] = "rbxassetid://10959371093",
+            ["Ectoplasm"] = "rbxassetid://128902407409114",
+            ["Glacial"] = "rbxassetid://13030805318",
+            ["Gold"] = "rbxassetid://13714456145",
+            ["Grand Prix"] = "rbxassetid://13841748041",
+            ["Logs"] = "rbxassetid://13556252494",
+            ["Multicam"] = "rbxassetid://15998421369",
+            ["Radium Scatter"] = "rbxassetid://126628134932565",
+            ["Tarnished Holly"] = "rbxassetid://119729701797306",
+            ["Webs"] = "rbxassetid://15177076142"
+        }
+    },
+
+    ["SKS"] = {
+        Skins = {
+            ["Copper"] = "rbxassetid://13394135741",
+            ["Digital"] = "rbxassetid://9341995268",
+            ["Fatal Contest"] = "rbxassetid://79663004296755",
+            ["Gold"] = "rbxassetid://16300596462",
+            ["Jacko"] = "rbxassetid://15177197176",
+            ["Jester"] = "rbxassetid://13343167267",
+            ["Modern"] = "rbxassetid://13388175991",
+            ["Nevermore"] = "rbxassetid://114269350268484",
+            ["Paragon"] = "rbxassetid://15998710430",
+            ["Snowcoat"] = "rbxassetid://111855555460594",
+            ["Umbrella"] = "rbxassetid://13841605579"
+        }
+    },
+
+    ["Super-Shorty"] = {
+        Skins = {
+            ["Checkmate"] = "rbxassetid://13713146952",
+            ["Firecracker"] = "rbxassetid://18149799297",
+            ["Gonggi"] = "rbxassetid://77120672555697",
+            ["Love Letter"] = "rbxassetid://16355338517",
+            ["Steel"] = "rbxassetid://13394161570"
+        }
+    },
+
+    ["TEC-9"] = {
+        Skins = {
+            ["Burgundy Pine"] = "rbxassetid://134671657569127",
+            ["Cotton Cloud"] = "rbxassetid://15998726079",
+            ["Diner"] = "rbxassetid://13712979305",
+            ["Import"] = "rbxassetid://13556231753",
+            ["Liberty"] = "rbxassetid://13935385791",
+            ["Lilac"] = "rbxassetid://13841531857",
+            ["Silent Order"] = "rbxassetid://92158078338766",
+            ["Snakeskin"] = "rbxassetid://13566186022",
+            ["Star-9"] = "rbxassetid://13387502788"
+        }
+    },
+
+    ["Tommy"] = {
+        Skins = {
+            ["Currant"] = "rbxassetid://13841583772",
+            ["Gold"] = "rbxassetid://15039147920",
+            ["Headstone"] = "rbxassetid://15177084790",
+            ["Hunting Lodge"] = "rbxassetid://128285305729440",
+            ["Leatherworks"] = "rbxassetid://13556313114",
+            ["Mobster"] = "rbxassetid://13387532472",
+            ["Plum"] = "rbxassetid://13388349585",
+            ["Uncle Sam"] = "rbxassetid://13936670325"
+        },
+        LinkedTools = { "Tommy", "Tommy-S" },
+        SkipParts = { ["Tommy"] = { "SuppressorPart" }, ["Tommy-S"] = { "SuppressorPart" } }
+    },
+
+    ["Uzi"] = {
+        Skins = {
+            ["Coldshell"] = "rbxassetid://117085656996740",
+            ["Crimson Jaw"] = "rbxassetid://13343335417",
+            ["Grape"] = "rbxassetid://13387917991",
+            ["Grape 2"] = "rbxassetid://16952083915",
+            ["Guilded"] = "rbxassetid://15998740952",
+            ["Pumpkin Spice"] = "rbxassetid://15177112812",
+            ["Rust"] = "rbxassetid://13715502850",
+            ["Smiley"] = "rbxassetid://13841666943"
+        },
+        LinkedTools = { "Uzi", "Uzi-S" },
+        SkipParts = { ["Uzi-S"] = { "SightPart", "SuppressorPart" } }
+    }
 }
 
-
-local maxAllowances = 3
-local allowanceCooldown = 45 * 60
-local allowanceDuration = 15 * 60
-local teleportStepDuration = 8
-
-local allowancesUsed = 0
-local lastClaimTime = 0
-
-local AnimationID = "rbxassetid://282574440"
-local AnimationTrack
-local Animator
-local Clip = false
-
-local NoclipConnection
-local RemoveLegsConnection
-local RemoveAccessoriesConnection
-
-getgenv().AutoFarmAndNoclipToggle = false
-
--- Helper: get root part
-local function getRootPart()
-    local char = player.Character or player.CharacterAdded:Wait()
-    return char:FindFirstChild("HumanoidRootPart")
-end
-
--- Teleport loop for duration
-local function teleportTo(position, duration)
-    local startTime = os.time()
-    while os.time() - startTime < duration do
-        if not getgenv().AutoFarmAndNoclipToggle then return end
-        local rp = getRootPart()
-        if rp then
-            pcall(function()
-                rp.CFrame = CFrame.new(position)
-            end)
+-- // Update helper
+local function updateToolMeshes(tool, textureID, skipParts)
+    for _, part in pairs(tool:GetDescendants()) do
+        if skipParts and table.find(skipParts, part.Name) then
+            continue
         end
-        wait(0.1)
+        if part:IsA("MeshPart") then
+            part.TextureID = textureID
+        end
     end
 end
 
--- Try to claim allowance logic
-local function tryClaimAllowance()
-    local currentTime = os.time()
-    if allowancesUsed >= maxAllowances and (currentTime - lastClaimTime) < allowanceCooldown then
-        return false
-    end
-    if (currentTime - lastClaimTime) >= allowanceCooldown then
-        allowancesUsed = 0
-    end
-    allowancesUsed += 1
-    lastClaimTime = currentTime
-    return true
-end
-
--- Autofarm main loop, cycles positions infinitely
-local function autofarmLoop()
-    while getgenv().AutoFarmAndNoclipToggle do
-        for _, pos in ipairs(targetPositions) do
-            if not getgenv().AutoFarmAndNoclipToggle then break end
-            teleportTo(pos, teleportStepDuration)
-            if tryClaimAllowance() then
-                
-                wait(allowanceDuration)
-            else
-                
-                wait(allowanceCooldown)
+-- // Apply logic
+local function applySkin(config, textureID)
+    local chars = Workspace:FindFirstChild("Characters")
+    if not chars then warn("No Characters folder!") return end
+    local tools = config.LinkedTools or { config.Name }
+    for _, char in pairs(chars:GetChildren()) do
+        for _, tName in pairs(tools) do
+            local tool = char:FindFirstChild(tName)
+            if tool then
+                updateToolMeshes(tool, textureID, config.SkipParts and config.SkipParts[tName])
             end
         end
     end
 end
 
--- Noclip and animation features
-local function noclipLoop()
-    if not Clip and player.Character then
-        for _, part in pairs(player.Character:GetDescendants()) do
-            if part:IsA("BasePart") and part.CanCollide == true then
-                part.CanCollide = false
-            end
+-- // UI Dropdowns
+for wName, cfg in pairs(WeaponSkins) do
+    cfg.Name = wName
+    local sks = {}
+    for nm in pairs(cfg.Skins) do table.insert(sks, nm) end
+    table.sort(sks)
+    SkinsLeft:AddDropdown(wName.."SkinDropdown", {
+        Values = sks,
+        Default = 1,
+        Multi = false,
+        Text = wName.." Skin",
+        Tooltip = "Choose a skin for "..wName,
+        Callback = function(sel)
+            local tid = cfg.Skins[sel]
+            if tid then applySkin(cfg, tid) end
+        end
+    })
+end
+
+-- // Services
+local Workspace = game:GetService("Workspace")
+
+-- // Expanded WeaponSkins table (right tab for melee tools)
+local MeleeSkins = {
+    ["Balisong"] = {
+        Skins = {
+            ["Fade"] = "rbxassetid://16688046451",
+            ["Tan"] = "rbxassetid://15445189234",
+            ["Vampiric"] = "rbxassetid://15177238158",
+            ["Viper"] = "rbxassetid://14983742104"
+        }
+    },
+    ["Bat"] = {
+        Skins = {
+            ["Bats"] = "rbxassetid://115906886710839",
+            ["Blackjack"] = "rbxassetid://16687986013",
+            ["Carousel"] = "rbxassetid://82343280013138",
+            ["Cashcane"] = "rbxassetid://16300595972",
+            ["Cosmic"] = "rbxassetid://15445293206",
+            ["Laminate"] = "rbxassetid://14983647732",
+            ["Neapolitan"] = "rbxassetid://18335364162",
+            ["OPMCane"] = "rbxassetid://17727652050",
+            ["Spiffle"] = "rbxassetid://15445298336",
+            ["Test Tube"] = "rbxassetid://87169085944045"
+        }
+    },
+    ["Baton"] = {
+        Skins = {
+            ["Magic Wand"] = "rbxassetid://15447728720",
+            ["Marbleized"] = "rbxassetid://16688078640",
+            ["Silver Banded"] = "rbxassetid://16688297084"
+        }
+    },
+    ["Bayonet"] = {
+        Skins = {
+            ["Fangs"] = "rbxassetid://14983836849",
+            ["Hydrographed"] = "rbxassetid://16688338006",
+            ["Paint Splatter"] = "rbxassetid://15710701266",
+            ["Red Topo"] = "rbxassetid://14982984551",
+            ["Stonecut"] = "rbxassetid://95862205225241",
+            ["Violet"] = "rbxassetid://15448010266"
+        }
+    },
+    ["Chainsaw"] = {
+        Skins = {
+            ["Chromatic"] = "rbxassetid://16688109289",
+            ["Fleshgrinder"] = "rbxassetid://84720894767609",
+            ["Frosty's Revenge"] = "rbxassetid://108135882535629",
+            ["Rip"] = "rbxassetid://15177794155",
+            ["Runic"] = "rbxassetid://124391413731378",
+            ["Skullforged"] = "rbxassetid://15445199978",
+            ["Tealcoat"] = "rbxassetid://14983069682"
+        }
+    },
+    ["Crowbar"] = {
+        Skins = {
+            ["Cobalt"] = "rbxassetid://14982777465",
+            ["Cobalt Pry"] = "rbxassetid://101584078628802",
+            ["Hazardous"] = "rbxassetid://16688167039"
+        }
+    },
+    ["Fireaxe"] = {
+        Skins = {
+            ["07 Gift"] = "rbxassetid://15695429682",
+            ["Axon"] = "rbxassetid://16688204062",
+            ["Biotool"] = "rbxassetid://122222905147597",
+            ["Candied"] = "rbxassetid://130045605147461",
+            ["Diesel"] = "rbxassetid://15014648272",
+            ["Fireaxe"] = "rbxassetid://333816720",
+            ["Jaws"] = "rbxassetid://15450299160",
+            ["Oak"] = "rbxassetid://14983464641",
+            ["XO"] = "rbxassetid://16357722311"
+        }
+    },
+    ["Golf Club"] = {
+        Skins = {
+            ["Mocha"] = "rbxassetid://15445223264",
+            ["Orange Shift"] = "rbxassetid://14983545106"
+        }
+    },
+    ["Katana"] = {
+        Skins = {
+            ["Acacia"] = "rbxassetid://16688144837",
+            ["Alchemist"] = "rbxassetid://88337986924078",
+            ["Arctx"] = "rbxassetid://15695443241",
+            ["Gold"] = "rbxassetid://15012855048",
+            ["Hallows Blade"] = "rbxassetid://15177260870",
+            ["Modest"] = "rbxassetid://15445243396",
+            ["Saphira"] = "rbxassetid://14983754881",
+            ["Void Edge"] = "rbxassetid://15012855048",
+            ["Yule Tide"] = "rbxassetid://78387945331940"
+        }
+    },
+    ["Machete"] = {
+        Skins = {
+            ["Gifted Edge"] = "rbxassetid://92544781884877",
+            ["Rainbow"] = "rbxassetid://16952073307",
+            ["Scepter"] = "rbxassetid://14984201334",
+            ["Slasher"] = "rbxassetid://128294287312695",
+            ["Tix"] = "rbxassetid://15445250012",
+            ["Ultra Cylon"] = "rbxassetid://0",
+            ["Wall Writer"] = "rbxassetid://16688357511"
+        }
+    },
+    ["Metal Bat"] = {
+        Skins = {
+            ["Battlescarred"] = "rbxassetid://16688458341",
+            ["Candy Corn"] = "rbxassetid://15184161486",
+            ["Jingle Bat"] = "rbxassetid://70405837770718",
+            ["North Pole"] = "rbxassetid://15707617354",
+            ["Serpentine"] = "rbxassetid://15028976092",
+            ["Tesla Coil"] = "rbxassetid://137524582120989",
+            ["Urban Leather"] = "rbxassetid://14982857134",
+            ["Vibe Check"] = "rbxassetid://15445259400"
+        }
+    },
+    ["Rambo"] = {
+        Skins = {
+            ["Cocoa"] = "rbxassetid://15449241079",
+            ["Rime Carver"] = "rbxassetid://130691379543412",
+            ["Scorched"] = "rbxassetid://18335129668",
+            ["Slasha"] = "rbxassetid://14983924234"
+        }
+    },
+    ["Scythe"] = {
+        Skins = {
+            ["Bloodlust"] = "rbxassetid://16551103097",
+            ["Gold"] = "rbxassetid://16571711832"
+        }
+    },
+    ["Shiv"] = {
+        Skins = {
+            ["Gold"] = "rbxassetid://15421623693"
+        }
+    },
+    ["Shovel"] = {
+        Skins = {
+            ["Conspiracy"] = "rbxassetid://16911044501",
+            ["Digital Digger"] = "rbxassetid://124031928584203",
+            ["Heartbreaker"] = "rbxassetid://16355295686",
+            ["Olive Worn"] = "rbxassetid://16688312479",
+            ["Pink Guard"] = "rbxassetid://106016605539630",
+            ["Sightings"] = "rbxassetid://15176959990",
+            ["Smiley2"] = "rbxassetid://14984656389",
+            ["Sovereign"] = "rbxassetid://15445273144",
+            ["X‑Ray"] = "rbxassetid://98683602066650"
+        }
+    },
+    ["Slayer"] = {
+        Skins = {
+            ["Angelic"] = "rbxassetid://16549614598",
+            ["Deo"] = "rbxassetid://0",
+            ["Overcharged"] = "rbxassetid://8770131341"
+        }
+    },
+    ["Sledgehammer"] = {
+        Skins = {
+            ["Boss"] = "rbxassetid://15695402056",
+            ["Holiday Maul"] = "rbxassetid://87288546728458",
+            ["Porcelain"] = "rbxassetid://15447463984}",
+            ["Weighted Bronze"] = "rbxassetid://16690699401"
+        }
+    },
+    ["Taiga"] = {
+        Skins = {
+            ["404"] = "rbxassetid://15448951687",
+            ["Bubblegum"] = "rbxassetid://14983876632",
+            ["Conductor"] = "rbxassetid://14982924033",
+            ["Current Crash"] = "rbxassetid://90247337759446",
+            ["Icicle"] = "rbxassetid://15711030418",
+            ["Scalemail"] = "rbxassetid://18335324158",
+            ["Scuffed"] = "rbxassetid://15449269269",
+            ["Thornslash"] = "rbxassetid://16355282883"
+        }
+    },
+    ["Wrench"] = {
+        Skins = {
+            ["Aerospace"] = "rbxassetid://15695484616",
+            ["Contractor"] = "rbxassetid://14982816807",
+            ["Dalgona"] = "rbxassetid://73802373376033",
+            ["Green Mask"] = "rbxassetid://15451673568",
+            ["Mr Wrench"] = "rbxassetid://16688441788}",
+            ["Schematic"] = "rbxassetid://106834702047296}",
+            ["Tendencies"] = "rbxassetid://15177035163}"
+        }
+    }
+}
+
+-- // Update helper (melee)
+local function updateMeleeMeshes(tool, textureID)
+    for _, part in pairs(tool:GetDescendants()) do
+        if part:IsA("MeshPart") then
+            part.TextureID = textureID
         end
     end
 end
 
-local function removeLegsLoop()
-    local char = player.Character
-    if char then
-        local rightLeg = char:FindFirstChild("Right Leg")
-        local leftLeg = char:FindFirstChild("Left Leg")
-        if rightLeg then rightLeg.Parent = nil end
-        if leftLeg then leftLeg.Parent = nil end
-    end
-end
-
-local function removeAccessoriesLoop()
-    local char = player.Character
-    if char then
-        for _, accessory in pairs(char:GetChildren()) do
-            if accessory:IsA("Accessory") then
-                accessory:Destroy()
-            end
+-- // Apply logic
+local function applyMeleeSkin(config, textureID)
+    local chars = Workspace:FindFirstChild("Characters")
+    if not chars then return warn("Missing Characters!") end
+    for _, char in pairs(chars:GetChildren()) do
+        local tool = char:FindFirstChild(config.Name)
+        if tool then
+            updateMeleeMeshes(tool, textureID)
         end
     end
 end
 
-local function playLoopingAnimation()
-    local char = player.Character
-    if not char then return end
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    Animator = humanoid:FindFirstChildOfClass("Animator")
-    if not Animator then
-        Animator = Instance.new("Animator", humanoid)
+-- // UI Dropdowns for melee skins
+for toolName, cfg in pairs(MeleeSkins) do
+    cfg.Name = toolName
+    local names = {}
+    for skinName, _ in pairs(cfg.Skins) do
+        table.insert(names, skinName)
     end
-    local anim = Instance.new("Animation")
-    anim.AnimationId = AnimationID
-    AnimationTrack = Animator:LoadAnimation(anim)
-    AnimationTrack.Looped = true
-    AnimationTrack:Play()
-end
-
-local function enableNoclipBriefly()
-    Clip = false
-    NoclipConnection = RunService.Stepped:Connect(noclipLoop)
-    task.delay(0.1, function()
-        Clip = true
-        if NoclipConnection then
-            NoclipConnection:Disconnect()
-            NoclipConnection = nil
+    table.sort(names)
+    SkinsRight:AddDropdown(toolName.."SkinDropdown", {
+        Values = names,
+        Default = 1,
+        Multi = false,
+        Text = toolName.." Skin",
+        Tooltip = "Choose a skin for "..toolName,
+        Callback = function(sel)
+            local tid = cfg.Skins[sel]
+            if tid then applyMeleeSkin(cfg, tid) end
         end
-    end)
+    })
 end
 
-local function startNoclipFeatures()
-    playLoopingAnimation()
-    RemoveLegsConnection = RunService.Stepped:Connect(removeLegsLoop)
-    RemoveAccessoriesConnection = RunService.Stepped:Connect(removeAccessoriesLoop)
-    enableNoclipBriefly()
-end
-
-local function stopNoclipFeatures()
-    if AnimationTrack then
-        AnimationTrack:Stop()
-        AnimationTrack = nil
-    end
-    if RemoveLegsConnection then
-        RemoveLegsConnection:Disconnect()
-        RemoveLegsConnection = nil
-    end
-    if RemoveAccessoriesConnection then
-        RemoveAccessoriesConnection:Disconnect()
-        RemoveAccessoriesConnection = nil
-    end
-    Clip = true
-end
-
--- On respawn, restart noclip and autofarm if toggle enabled
-player.CharacterAdded:Connect(function()
-    if getgenv().AutoFarmAndNoclipToggle then
-        task.wait(1)
-        startNoclipFeatures()
-        task.spawn(autofarmLoop)
-    else
-        stopNoclipFeatures()
-    end
-end)
-
--- The single toggle controlling both autofarm and noclip
-MiscRight:AddToggle('autofarmandnocliptoggle', {
-    Text = 'Allowance Autofarm V2',
-    Default = false,
-    Tooltip = 'Allowance Autofarm',
-    Callback = function(value)
-        getgenv().AutoFarmAndNoclipToggle = value
-        if value then
-            startNoclipFeatures()
-            task.spawn(autofarmLoop)
-        else
-            stopNoclipFeatures()
-        end
-    end
-})
 local EspLeft = Tabs.Esp:AddLeftGroupbox('Player Esp')
 
 local Players = game:GetService("Players")
@@ -2465,7 +3184,6 @@ EspLeft:AddLabel('ESP Tracer Color'):AddColorPicker('ESPTracerColor', {
         getgenv().ESPTracerColor = color
     end
 })
-
 
 -- UI Settings Tab
 local MenuGroup = Tabs['UI Settings']:AddLeftGroupbox('Menu')
